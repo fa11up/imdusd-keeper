@@ -1,0 +1,16 @@
+{
+  "name": "imdusd-keeper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Keeper for the imdUSD CDP vault: oracle watcher, attestation relayer, liquidator, pacer and INFER dripper. Report-only by default.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node index.mjs",
+    "once": "node index.mjs --once",
+    "verify-deployment": "node scripts/verify-deployment.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": { "ethers": "^5.7.2" }
+}
