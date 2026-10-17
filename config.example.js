@@ -11,10 +11,17 @@ export default {
 
   DEPLOYMENT: process.env.DEPLOYMENT || "./deployment/mainnet/deployment.json",
 
+  // Which loops the daemon (index.mjs) runs, in this order. Drop names to specialise: ["positions"] is a
+  // liquidator, ["watch", "relay"] an oracle helper. pace and drip also need PACE.enabled / DRIP.enabled below.
+  LOOPS: ["watch", "relay", "positions", "pace", "drip"],
+
   // One chain: the vault, the feeds, the asker and IMD's pool are all on Ethereum mainnet. Use a
   // provider you trust for SENDING; a public node is fine for reads but has dropped logs on us before.
   MAINNET_RPC_URL: process.env.MAINNET_RPC_URL || "https://ethereum-rpc.publicnode.com",
   VAULT_RPC_URL: process.env.VAULT_RPC_URL || process.env.MAINNET_RPC_URL || "https://ethereum-rpc.publicnode.com",
+  // Every read (calls, estimates, nonces, receipts) goes to these, failing over in order after a 2 s stall. The env
+  // var READ_RPC_URLS (comma-separated) overrides this list.
+  READ_RPC_URLS: ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"],
 
   // Position discovery. Mainnet Blockscout wants a real User-Agent and, past its anonymous quota,
   // BLOCKSCOUT_API_KEY in the environment.
@@ -66,6 +73,12 @@ export default {
   // While the OracleAsker has a request in flight for a feed, leave its answer to the Intake's own callback for this
   // long after issue (relaying first only duplicates the delivery); past it, relay it.
   RELAY_CALLBACK_GRACE_SECONDS: 600,
+  // The same for a Treasury-paid request, longer: if a relay lands first, the Intake's late callback reverts and the
+  // asker backs the feed off for two hours.
+  RELAY_TREASURY_CALLBACK_GRACE_SECONDS: 1800,
+  // Relay attestations other people bought for these feeds too. Safe because every mainnet feed pins its question and
+  // the relayer checks the question hash first (lib/attestation.mjs). Default true with a deployment record.
+  RELAY_ANY: true,
 
   INTERVALS: {
     watchSeconds: 60, // drift arming is block-sensitive: arm, then ask 5..100 blocks later

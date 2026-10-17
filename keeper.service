@@ -1,6 +1,6 @@
 # systemd unit template. Install as a USER unit so the keeper never runs as root:
 #
-#   mkdir -p ~/.config/systemd/user
+#   mkdir -p ~/imdusd-keeper/state ~/.config/systemd/user   # ReadWritePaths below must exist
 #   cp keeper.service ~/.config/systemd/user/imdusd-keeper.service
 #   # edit WorkingDirectory and ExecStart below
 #   loginctl enable-linger $USER
@@ -17,7 +17,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/imdusd-keeper
-EnvironmentFile=%h/imdusd-keeper/.env
+EnvironmentFile=-%h/imdusd-keeper/.env
 ExecStart=/usr/bin/env node index.mjs
 Restart=always
 RestartSec=30

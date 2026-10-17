@@ -32,6 +32,9 @@ const LOOPS = [
   // The INFER dripper: releases the Treasury's INFER for stakers into sINFER, hourly. Routine tier.
   { name: "drip", script: "drip.mjs", every: cfg.INTERVALS.dripSeconds ?? 3600, passes: EXECUTE ? ["--execute"] : [] },
 ]
+  // LOOPS (config.js) names the loops this keeper runs; omitted, it runs all of them. pace and drip also need
+  // their own `enabled` flag, because each spends gas for nothing (pace) or for a bounty others race for (drip).
+  .filter((l) => !Array.isArray(cfg.LOOPS) || cfg.LOOPS.includes(l.name))
   .filter((l) => l.name !== "pace" || cfg.PACE?.enabled !== false)
   .filter((l) => l.name !== "drip" || cfg.DRIP?.enabled === true);
 
