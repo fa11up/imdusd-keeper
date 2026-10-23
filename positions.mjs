@@ -26,6 +26,7 @@ import { send, describe, keeperSigner } from "./lib/tx.mjs";
 import { spentToday, recordSpend } from "./lib/spend.mjs";
 import { isDust, saveOwners, riskCfg } from "./lib/risk.mjs";
 import cfg from "./config.js";
+import { plane } from "./lib/plane.mjs";
 
 const FEED_ABI = ["function latestValue() view returns (uint256,uint64)"];
 const ERC20 = [
@@ -197,6 +198,8 @@ async function whilePricingIsStale(dep, provider, rows, mat, px, signer) {
     console.log(`         ${atRisk} at risk, but ${wad(need)} IMD would exceed today's ASK_PAID budget (${wad(spentToday())} of ${wad(budget)} spent).`);
     return;
   }
+  const pl = await plane(provider, cfg);
+  if (!pl.ok) { console.log(`         ${atRisk} at risk, but the update is held: ${pl.why}.`); return; }
   // The vault needs BOTH the price and the spot fresh, and within skew of each other: one alone buys nothing.
   for (const role of ["price", "spot"]) {
     const f = dep.feeds.find((x) => x.role === role);

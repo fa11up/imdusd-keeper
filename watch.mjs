@@ -36,6 +36,7 @@ import { loadDeployment } from "./lib/deployment.mjs";
 import { send, describe, keeperSigner } from "./lib/tx.mjs";
 import { spentToday, recordSpend } from "./lib/spend.mjs";
 import { readLiveNhi } from "./lib/nhi.mjs";
+import { plane, describePlane } from "./lib/plane.mjs";
 import { loansAtRisk, riskCfg, pairDisagrees, pairGapBps } from "./lib/risk.mjs";
 import { windowOf, projectMedian, gapBps } from "./lib/median.mjs";
 import cfg from "./config.js";
@@ -165,8 +166,14 @@ async function main() {
   else console.log("This watcher does not spend. Review each command before running it.");
 }
 
+// The plane this run talks to, and whether an update bought now could be answered (lib/plane.mjs). Set once per
+// run in askerMode; every ask, Treasury-paid or the keeper's own, is held while it is not ok.
+let PLANE = null;
+
 async function askerMode(dep) {
   const provider = readProvider(cfg);
+  PLANE = await plane(provider, cfg);
+  console.log(describePlane(PLANE));
   const execute = process.argv.includes("--execute");
   let signer = null;
   if (execute) {
@@ -276,9 +283,9 @@ async function askerMode(dep) {
     // once per run. Null when it cannot be read: then the keeper buys as it did before.
     let live = cfgRow.tracksPool ? pool : null;
     if (f.role === "nhi") {
-      live = await readLiveNhi(cfg.API_BASE);
+      live = PLANE.base ? await readLiveNhi(PLANE.base) : null;
       if (live === null) console.log("       live  NHI: the control plane could not be read; buying without the allowance check");
-      else console.log(`       live  NHI ${utils.formatEther(live)} from ${cfg.API_BASE}/swarm`);
+      else console.log(`       live  NHI ${utils.formatEther(live)} from ${PLANE.base}/swarm`);
     }
     const anchorDrift = anchor.isZero() || live === null ? null : bps(live, anchor);
     console.log(`       allow ${(allow / 100).toFixed(1)}% from the epoch anchor${anchorDrift === null ? "" : `; the pool is ${(anchorDrift / 100).toFixed(2)}% from it`}${wide ? "   WIDE OPEN: the Treasury refreshes it" : ""}`);
@@ -359,7 +366,7 @@ async function askerMode(dep) {
   // and is permissionless; call it first if an ask is due and one update would not be covered.
   const asks = tasks.filter((t) => t.what === "ask");
   let funded = held;
-  if (asks.length && !price_.isZero() && held.lt(price_.mul(asks.length))) {
+  if (PLANE.ok && asks.length && !price_.isZero() && held.lt(price_.mul(asks.length))) {
     const treasury = new Contract(treasuryAddr, TREASURY_ABI, signer);
     const r = await send(signer, "fundOracle", () => treasury.callStatic.fundOracle(), () => treasury.fundOracle(), cfg);
     console.log(`fund    ${describe(r)}`);
@@ -367,6 +374,7 @@ async function askerMode(dep) {
   }
   const fallback = { alive: null, fall: null, wide: null };
   for (const t of tasks) {
+    if (t.what === "ask" && !PLANE.ok) { console.log(`ask     ${t.f.role}: held, ${PLANE.why}.`); continue; }
     if (t.what === "ask" && !price_.isZero() && funded.lt(price_)) {
       // The Treasury cannot pay for this one.
       const covered = cfg.KEEPER_ORACLE_FALLBACK !== false && (t.kind === "alive" || t.kind === "fall" || (t.kind === "wide" && t.f.role === "price"));
@@ -467,6 +475,7 @@ async function keeperBuys(dep, signer, asker, rows, each, { budgetImd = cfg.ASK_
     return;
   }
   const imd = new Contract(dep.imd, ERC20, signer);
+  if (PLANE && !PLANE.ok) { console.log(`keep    held, ${PLANE.why}.`); return; }
   if ((await imd.balanceOf(signer.address)).lt(need)) { console.log(`keep    the keeper holds less than ${utils.formatEther(need)} IMD: top it up.`); return; }
   if ((await imd.allowance(signer.address, dep.asker)).lt(need)) {
     const a = await send(signer, "approve", () => imd.callStatic.approve(dep.asker, need), () => imd.approve(dep.asker, need), cfg);

@@ -7,7 +7,9 @@
 // The defaults below are SAFE FOR A NEW OPERATOR: the keeper pays gas only, never its own IMD. Every loop
 // that spends anything else is opt-in and says so.
 export default {
-  API_BASE: "https://api.imd.fun",
+  API_BASE: "https://api.imd.fun", // tried after the servers listed in ENS (identitymd.eth, text record imd.servers): lib/plane.mjs
+  API_FALLBACKS: [], // more servers to try last
+  PLANE: { holdAfterBlocked: 3, timeoutMs: 8000 }, // no update is bought while the newest N settled requests were all blocked
 
   DEPLOYMENT: process.env.DEPLOYMENT || "./deployment/mainnet/deployment.json",
 
@@ -36,10 +38,10 @@ export default {
 
   // --- guard rails on every transaction (lib/tx.mjs) ---
   MAX_GAS_GWEI: 30, // send nothing while gas is above this
-  // Two floors (lib/tx.mjs): housekeeping (pace, resecure) stops first, so the oracle keep-alive and liquidations
-  // keep their gas; they stop only at MIN_ETH, which still covers a bark and its bite.
+  // Two floors (lib/tx.mjs): the drip stops first, so the oracle keep-alive, pacing and liquidations keep their gas;
+  // they stop only at MIN_ETH, which still covers a bark and its bite.
   MIN_ETH: 0.003,
-  ROUTINE_MIN_ETH: 0.02,
+  ROUTINE_MIN_ETH: 0.02, // the drip stops below this; pace and resecure stop only at MIN_ETH (lib/tx.mjs)
   // The tip over the base fee, per tier (ethers' default 1.5 gwei was ~90% of every fee at a 0.13 gwei base fee).
   // Sends go through a private mempool the read RPCs cannot see, so a tip too low to be included soon would
   // leave the next send reusing its nonce: keep both well above zero.

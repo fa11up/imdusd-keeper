@@ -15,6 +15,7 @@ import { readProvider } from "./lib/rpc.mjs";
 import { providers, Contract } from "ethers";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { preflight, listAttested, fetchAttestation, RELAY_ABI, FEED_ABI } from "./lib/attestation.mjs";
+import { plane } from "./lib/plane.mjs";
 import { loadDeployment } from "./lib/deployment.mjs";
 import { send, describe, keeperSigner } from "./lib/tx.mjs";
 import cfg from "./config.js";
@@ -58,6 +59,9 @@ const feedByAddress = (addr) =>
 
 async function main() {
   const provider = readProvider(cfg);
+  // The first plane server that answers (ENS imd.servers, then the config's): attestations are read from it even
+  // while the plane is failing new jobs, since an answer that exists can still be relayed.
+  const api = (await plane(provider, { ...cfg, PLANE: { ...cfg.PLANE, holdAfterBlocked: 0 } })).base ?? cfg.API_BASE;
   const state = loadState();
   let signer = null;
   if (execute) {
@@ -72,7 +76,7 @@ async function main() {
   const candidates = pending.map((id) => ({ id, owned: true }));
 
   if (any) {
-    const listed = await listAttested(cfg.API_BASE, 100);
+    const listed = await listAttested(api, 100);
     for (const r of listed) {
       if (state.relayed.includes(r.id) || candidates.some((c) => c.id === r.id)) continue;
       candidates.push({ id: r.id, owned: false });
@@ -86,7 +90,7 @@ async function main() {
   }
 
   for (const c of candidates) {
-    const att = await fetchAttestation(cfg.API_BASE, c.id);
+    const att = await fetchAttestation(api, c.id);
     if (!att.ok) { console.log(`${c.id}  not attested yet (HTTP ${att.status})`); continue; }
 
     const consumer = att.body.domain?.verifyingContract;

@@ -114,7 +114,7 @@ cp .env.example .env && chmod 600 .env                # put the phrase in KEEPER
 
 | balance | needed by | how much | note |
 |---|---|---|---|
-| **ETH** | every loop that sends | 0.03–0.05 ETH to start | Urgent sends (ask, arm, fundOracle, relay, bark, bite) stop below `MIN_ETH` (0.003). Housekeeping (pace, resecure, drip) stops below `ROUTINE_MIN_ETH` (0.02), so housekeeping can never spend the gas a bite needs |
+| **ETH** | every loop that sends | 0.03–0.05 ETH to start | Every send except the drip (ask, arm, fundOracle, relay, bark, bite, pace, resecure) stops below `MIN_ETH` (0.003). The drip stops below `ROUTINE_MIN_ETH` (0.02), so it can never spend the gas a bite needs. Pace and resecure keep the cheap routine tip |
 | **imdUSD** | positions (bite) | as much as you want to be able to liquidate | `bite` burns the caller's imdUSD; with none you can bark but not bite, and a bite is sized down to what you hold. Buy it in the imdUSD/USDC pool, or borrow it from the vault against IMD. It is working capital, not an expense: a bite returns more value in sIMD than it burns |
 | **IMD** | only the opt-in spending rules | 0.5 IMD per update | approval to the asker is sent automatically, for the exact amount, when first needed |
 
@@ -190,7 +190,9 @@ next tick. `LOOPS` and `INTERVALS` are read once at start, so changing them need
 | key | default | meaning |
 |---|---|---|
 | `DEPLOYMENT` | the shipped mainnet record | Where every address and oracle body comes from. See [the deployment record](#the-deployment-record) |
-| `API_BASE` | `https://api.imd.fun` | The IdentityMD oracle plane: lists attested requests and serves their signatures, plus the `/swarm` reading behind the NHI feed |
+| `API_BASE` | `https://api.imd.fun` | The IdentityMD oracle plane: lists attested requests and serves their signatures, plus the `/swarm` reading behind the NHI feed. Tried after the servers in the `imd.servers` text record of `identitymd.eth`, which the plane's operator keeps on chain; the first server whose `/health` answers is used (`lib/plane.mjs`) |
+| `API_FALLBACKS` | `[]` | More plane servers to try after ENS and `API_BASE` |
+| `PLANE` | `{ holdAfterBlocked: 3, timeoutMs: 8000 }` | No update is bought while no plane server answers, or while the plane's newest `holdAfterBlocked` settled oracle requests were all `blocked` (a plane that is up but failing every job). Paid requests are not refunded, so holding costs only time. `0` turns the second check off; `timeoutMs` is per server |
 | `INDEXER` | `https://eth.blockscout.com` | Position discovery. `"rpc"` reads `eth_getLogs` from your node, which is for local forks only (see [why](#position-discovery-needs-an-indexer)) |
 | `POOL` | IMD/ETH v4 pool | `{ poolManager, poolId, invert }`: the pool the price feeds read, used for the stale-price estimate. `invert: false` is ETH per IMD, the direction every feed quotes |
 
@@ -211,7 +213,7 @@ next tick. `LOOPS` and `INTERVALS` are read once at start, so changing them need
 |---|---|---|
 | `MAX_GAS_GWEI` | 30 | Send nothing while the network gas price is above this |
 | `MIN_ETH` | 0.003 | Urgent sends (ask, arm, fundOracle, relay, bark, bite, approve) stop below this balance |
-| `ROUTINE_MIN_ETH` | 0.02 | Housekeeping (pace, resecure, drip) stops below this. Keep it above `MIN_ETH` |
+| `ROUTINE_MIN_ETH` | 0.02 | The drip stops below this (pace and resecure stop only at `MIN_ETH`). Keep it above `MIN_ETH` |
 | `FEES.routine.tipGwei` / `FEES.urgent.tipGwei` | 0.05 / 0.5 | Priority tip per tier, over a fee cap of twice the base fee. Too low and a private-mempool send sits unmined; keep both above zero |
 | `GAS_MARGIN_BPS` | 2500 | Gas limit = the node's estimate + 25%. The vault's gas cost moves with the block time; unused margin costs nothing |
 
