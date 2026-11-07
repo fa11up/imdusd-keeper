@@ -16,7 +16,7 @@
 // Treasury pays only when IMD's pool drifts (OracleAsker.ask), so a quiet market leaves the price feed
 // stale and every bark and bite refused. When that happens this loop estimates every position at the
 // pool's price, and if any would be under `mat` it may buy a fresh price and spot with the KEEPER'S
-// OWN IMD (OracleAsker.askPaid), within ASK_PAID_IMD_PER_DAY. Off (0) by default.
+// OWN IMD (OracleAsker.askPaidMany), within ASK_PAID_IMD_PER_DAY. Off (0) by default.
 import { readProvider } from "./lib/rpc.mjs";
 import { providers, Contract, BigNumber, utils } from "ethers";
 import { makerVault, discoverOwners, maxRepayable, payout, markWindow, pricing } from "./lib/vault.mjs";
@@ -36,7 +36,7 @@ const ERC20 = [
 ];
 const ASKER_ABI = [
   "function price() view returns (uint256)",
-  "function askPaid(address feed, bytes body, uint256 maxPrice) returns (bytes32)",
+  "function askPaidMany(address[] feeds, bytes[] bodies, uint256 maxPriceEach) returns (bytes32[])",
 ];
 const execute = process.argv.includes("--execute");
 const wad = (x) => utils.formatUnits(x, 18);
@@ -99,7 +99,7 @@ async function main() {
   console.log();
 
   if (px.stale) {
-    await whilePricingIsStale(dep, provider, rows, mat, px, signer);
+    await whilePricingIsStale(dep, provider, rows, mat, px, signer, { tail, now });
     return;
   }
 
@@ -156,9 +156,20 @@ async function main() {
  * Nothing can be barked or bitten. Say so, estimate who would be under `mat` at the pool's price, and
  * — only with --execute and a nonzero ASK_PAID_IMD_PER_DAY — buy a fresh price and spot ourselves.
  */
-async function whilePricingIsStale(dep, provider, rows, mat, px, signer) {
+async function whilePricingIsStale(dep, provider, rows, mat, px, signer, { tail, now }) {
   console.log(`BLOCKED: pricing is stale (${px.why.join(", ") || "no value yet"}), so bark and bite revert for every position.`);
   if (rows.length === 0) { console.log(`         No position has debt, so nothing is waiting on a price.`); return; }
+  const budget = utils.parseEther(String(cfg.ASK_PAID_IMD_PER_DAY ?? 0));
+  // A MARK CAN EXPIRE UNBITTEN. The price feed lives an hour, the lull is six: in a flat market the Treasury buys no
+  // price, so a mark's whole tail can pass with bite refused. Nothing here spends to prevent it; the operator is told.
+  if (!dep.asker || budget.isZero()) {
+    for (const r of rows) {
+      const win = markWindow(r.mark, tail, now);
+      if (win.state === "actionable") {
+        console.log(`         WARNING ${r.owner} is barked and biteable for ${secs(win.secondsLeft)} more, but pricing is stale and ASK_PAID_IMD_PER_DAY is 0: the mark expires unbitten unless a price lands.`);
+      }
+    }
+  }
 
   // ESTIMATE, not the vault's figure: the last collateral price scaled by how far IMD's pool has moved
   // from the price feed's last value. It ignores any ETH/USD move since, which is why it only decides
@@ -183,7 +194,6 @@ async function whilePricingIsStale(dep, provider, rows, mat, px, signer) {
   }
   if (atRisk === 0) { console.log(`         no position would be under mat at the pool's price: nothing worth paying for.`); return; }
 
-  const budget = utils.parseEther(String(cfg.ASK_PAID_IMD_PER_DAY ?? 0));
   if (!dep.asker || budget.isZero()) {
     console.log(`         ${atRisk} at risk. Buying a price ourselves is off (ASK_PAID_IMD_PER_DAY = 0, or no asker).`);
     return;
@@ -200,22 +210,23 @@ async function whilePricingIsStale(dep, provider, rows, mat, px, signer) {
   }
   const pl = await plane(provider, cfg);
   if (!pl.ok) { console.log(`         ${atRisk} at risk, but the update is held: ${pl.why}.`); return; }
-  // The vault needs BOTH the price and the spot fresh, and within skew of each other: one alone buys nothing.
-  for (const role of ["price", "spot"]) {
-    const f = dep.feeds.find((x) => x.role === role);
-    if ((await imd.allowance(signer.address, dep.asker)).lt(each)) {
-      const a = await send(signer, "approve", () => imd.callStatic.approve(dep.asker, each), () => imd.approve(dep.asker, each), cfg);
-      console.log(`         approve ${describe(a)}`);
-      if (!a.hash) return;
-    }
-    const res = await send(
-      signer, `askPaid ${role}`,
-      () => asker.callStatic.askPaid(f.address, f.body.bytes, each),
-      () => asker.askPaid(f.address, f.body.bytes, each), cfg,
-    );
-    console.log(`         askPaid ${role}: ${describe(res)}`);
-    if (res.hash) recordSpend(each);
+  // The vault needs BOTH the price and the spot fresh, and within skew of each other: one alone buys nothing. So
+  // both go in one askPaidMany, as watch.mjs buys a pair: a failure on the second can no longer waste the first.
+  const pair = ["price", "spot"].map((role) => dep.feeds.find((x) => x.role === role));
+  if ((await imd.allowance(signer.address, dep.asker)).lt(need)) {
+    const a = await send(signer, "approve", () => imd.callStatic.approve(dep.asker, need), () => imd.approve(dep.asker, need), cfg);
+    console.log(`         approve ${describe(a)}`);
+    if (!a.hash) return;
   }
+  const feeds = pair.map((f) => f.address);
+  const bodies = pair.map((f) => f.body.bytes);
+  const res = await send(
+    signer, "askPaidMany price+spot",
+    () => asker.callStatic.askPaidMany(feeds, bodies, each),
+    () => asker.askPaidMany(feeds, bodies, each), cfg,
+  );
+  console.log(`         askPaidMany price + spot: ${describe(res)}`);
+  if (res.hash) recordSpend(need);
 }
 
 main().catch((e) => { console.error("positions failed:", e.message); process.exitCode = 1; });

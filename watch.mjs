@@ -291,6 +291,14 @@ async function askerMode(dep) {
     console.log(`       allow ${(allow / 100).toFixed(1)}% from the epoch anchor${anchorDrift === null ? "" : `; the pool is ${(anchorDrift / 100).toFixed(2)}% from it`}${wide ? "   WIDE OPEN: the Treasury refreshes it" : ""}`);
     const lifeLeft = age === null ? 0 : Number(maxAge) - age;
     seen.push({ f, feed, value, stale, falling, drift: drift.toNumber(), inFlight, lifeLeft, wide, allow, anchorDrift });
+    // A request answered by hand (relay.mjs, or anyone through SwarmRelay) leaves the asker's slot held until the
+    // Intake's callback clears it (OracleAsker.onOracleResult, which never reverts on the duplicate) or ASK_TIMEOUT.
+    // The gate cannot lift early: ask and askPaid revert InFlight and askPaidMany skips the feed until then. A value
+    // set after the request was sent is how the watcher tells "answered, waiting for the callback" from "unanswered".
+    if (inFlight && Number(updatedAt) > Number(cfgRow.inFlightAt)) {
+      console.log(`       wait  request ${cfgRow.inFlight.slice(0, 18)}… answered ${ago(head.timestamp - Number(updatedAt))} ago; the asker holds its slot until the Intake's callback or ${ago(Number(cfgRow.inFlightAt) + ASK_TIMEOUT - head.timestamp)} from now\n`);
+      continue;
+    }
     if (inFlight) { console.log(`       wait  request ${cfgRow.inFlight.slice(0, 18)}… in flight\n`); continue; }
 
     // Bought while the pool sits further from the anchor than the allowance, an attestation is refused on
@@ -374,7 +382,8 @@ async function askerMode(dep) {
   }
   const fallback = { alive: null, fall: null, wide: null };
   for (const t of tasks) {
-    if (t.what === "ask" && !PLANE.ok) { console.log(`ask     ${t.f.role}: held, ${PLANE.why}.`); continue; }
+    // Arming costs gas and only leads to an ask, so it waits with the ask.
+    if (!PLANE.ok) { console.log(`${t.what.padEnd(7)} ${t.f.role}: held, ${PLANE.why}.`); continue; }
     if (t.what === "ask" && !price_.isZero() && funded.lt(price_)) {
       // The Treasury cannot pay for this one.
       const covered = cfg.KEEPER_ORACLE_FALLBACK !== false && (t.kind === "alive" || t.kind === "fall" || (t.kind === "wide" && t.f.role === "price"));
