@@ -14,7 +14,7 @@
 import { readProvider } from "./lib/rpc.mjs";
 import { providers, Contract } from "ethers";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { preflight, listAttested, fetchAttestation, RELAY_ABI, FEED_ABI } from "./lib/attestation.mjs";
+import { preflight, lapsed, listAttested, fetchAttestation, RELAY_ABI, FEED_ABI } from "./lib/attestation.mjs";
 import { plane } from "./lib/plane.mjs";
 import { loadDeployment } from "./lib/deployment.mjs";
 import { send, describe, keeperSigner } from "./lib/tx.mjs";
@@ -29,8 +29,8 @@ const dep = loadDeployment(cfg);
 const any = process.argv.includes("--any") || dep.relayAny;
 
 const loadState = () => {
-  if (!existsSync(STATE)) return { owned: [], relayed: [] };
-  return JSON.parse(readFileSync(STATE, "utf8"));
+  if (!existsSync(STATE)) return { owned: [], relayed: [], expired: [] };
+  return { expired: [], ...JSON.parse(readFileSync(STATE, "utf8")) };
 };
 const saveState = (s) => {
   mkdirSync(new URL("./state/", import.meta.url), { recursive: true });
@@ -43,6 +43,8 @@ const saveState = (s) => {
 // 2026-10-12: we relayed 14 blocks before the Intake's callback). So while a request is in flight, an answer is
 // left to the callback for this long after it was issued; past it the callback is presumed lost and we relay.
 // Answers bought outside the asker (the plane's API) get no callback and are relayed at once.
+// Relaying by hand does not free the asker's slot: only the callback (or ASK_TIMEOUT) does, so the watcher's in-flight
+// gate holds until then whoever delivered the answer (watch.mjs says which).
 // A TREASURY-PAID request waits longer. If our relay lands first and the Intake's callback comes after, the feed refuses
 // the duplicate and the asker reads that as a refused Treasury purchase: it holds off Treasury-paid updates for the
 // feed for ASK_TIMEOUT (2 h). Seen 2026-10-13: the Intake delivered 1 h late, after our relay at 10 min, and price +
@@ -72,13 +74,14 @@ async function main() {
   // Candidates: everything we bought and have not yet relayed, plus — with --any — whatever the plane
   // lists as attested for one of our feeds.
   const asker = dep.asker ? new Contract(dep.asker, ASKER_ABI, provider) : null;
-  const pending = state.owned.filter((id) => !state.relayed.includes(id));
+  const done = (id) => state.relayed.includes(id) || state.expired.includes(id);
+  const pending = state.owned.filter((id) => !done(id));
   const candidates = pending.map((id) => ({ id, owned: true }));
 
   if (any) {
     const listed = await listAttested(api, 100);
     for (const r of listed) {
-      if (state.relayed.includes(r.id) || candidates.some((c) => c.id === r.id)) continue;
+      if (done(r.id) || candidates.some((c) => c.id === r.id)) continue;
       candidates.push({ id: r.id, owned: false });
     }
   }
@@ -115,6 +118,13 @@ async function main() {
       // On chain already (the Intake's callback, or anyone's relay): done, stop re-checking it every pass.
       console.log(`  already on chain: delivered by the Intake's callback or another relayer`);
       state.relayed.push(c.id);
+      saveState(state);
+      continue;
+    }
+    if (lapsed(pf.fail)) {
+      // Past its expiry or the feed's maxAge, it can never land: stop re-checking it every pass.
+      console.log(`  LAPSED, dropped:\n    - ${pf.fail.join("\n    - ")}`);
+      state.expired.push(c.id);
       saveState(state);
       continue;
     }

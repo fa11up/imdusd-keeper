@@ -40,6 +40,13 @@ test("holds when the newest settled requests were all blocked (the 2026-10-23 ou
   assert.match(p.why, /all blocked/);
 });
 
+test("a hold ends when the blocked requests are old, or the keeper could never ask again", async () => {
+  const at = (ms) => ({ requests: [0, 1, 2].map(() => ({ status: "blocked", createdAt: new Date(ms).toISOString() })) });
+  const with_ = (body) => async (u) => ok(u.endsWith("/health") ? { status: "ok" } : body);
+  assert.equal((await plane(ens("https://a.example"), {}, with_(at(Date.now() - 60_000)))).ok, false);
+  assert.equal((await plane(ens("https://a.example"), {}, with_(at(Date.now() - 3 * 3600_000)))).ok, true);
+});
+
 test("a blocked request among answered ones does not hold", async () => {
   const fetchImpl = async (u) => ok(u.endsWith("/health") ? { status: "ok" } : requests("blocked", "attested", "blocked"));
   assert.equal((await plane(ens("https://a.example"), {}, fetchImpl)).ok, true);
